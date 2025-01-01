@@ -1,0 +1,178 @@
+# Rust Auto Updator
+
+Reusable GitHub release updates for portable Windows Rust applications, with an optional egui panel and shared visual theme. The core is shared by the sibling Rust applications; each product keeps its repository identity, settings, renderer and shutdown lifecycle.
+
+## Separation
+
+| Package / module | Responsibility |
+| --- | --- |
+| `rust-auto-updator` | Release discovery, semantic versions, HTTPS download, size/SHA-256/PE verification, worker events, workflow state, Windows replacement and restart |
+| `rust-auto-updator-egui` | Update panel and event-loop wake adapter, using the host application's egui theme |
+| `rust-auto-updator-egui::style` | Optional dark palette, typography, spacing, theme installation and card container |
+| Consuming application | Repository/version/asset configuration, persisted preferences, its own renderer, CLI routing, saving data and exiting before installation |
+
+The core does not depend on egui. The panel never installs a global theme. Applications may use the core with any UI, use the panel with their own theme, or explicitly opt into the supplied dark theme. Neither crate owns a window, renderer, tray, settings file, or application event loop.
+
+```text
+crates/
+  rust-auto-updator/src/
+    config.rs      product and installation configuration
+    github.rs      repository-bound stable release selection
+    verify.rs      checksums and executable validation
+    install.rs     staging, helper, replacement, rollback, cleanup
+    service.rs     blocking network worker and event channel
+    controller.rs  UI-independent update workflow
+  rust-auto-updator-egui/src/
+    lib.rs         reusable panel and egui wake adapter
+    style.rs       optional shared visual system
+```
+
+## Add to another project
+
+Keep this workspace beside the consuming project, then add:
+
+```toml
+[dependencies]
+rust-auto-updator = { path = "../rust-auto-updator/crates/rust-auto-updator" }
+rust-auto-updator-egui = { path = "../rust-auto-updator/crates/rust-auto-updator-egui" }
+egui = { version = "=0.37.0", default-features = false, features = ["default_fonts"] }
+```
+
+Omit the egui package when building a different UI. This workspace is currently a local dependency, not a published registry or GitHub package. CI must provision the same sibling folder; copying only the consuming repository is insufficient. Once hosted, the path entries can be replaced with Git dependencies pinned to a revision or published package versions.
+
+The workspace requires Rust 1.95, matching the optional egui 0.37 dependency. Verification in this checkout used Rust 1.96.1; the exact minimum toolchain and non-Windows targets have not been exercised. Include this workspace's [MIT notice](LICENSE) when redistributing its code or linked executables.
+
+## Existing workers and product compatibility
+
+Products with a sleeping background worker can use `check_latest(&config)` and `prepare_download(&release, &config, progress)` directly on that worker instead of creating a nested `Service`. The cancellable variant is `prepare_download_cancellable(&release, &config, &AtomicBool, progress)`. Cancellation is checked before requests, between download reads and before the prepared result; an already blocked network operation remains bounded by its configured timeout. `Service::cancel_download()` provides the same cancellation for the shared worker, and dropping the service cancels its active download.
+
+`Release` exposes the parsed version, notes and release page, plus read-only `executable_name()`, `executable_url()`, `executable_size()`, `checksum_url()` and `sha256_digest()` accessors. `Prepared` owns its staging files until successful handoff; dropping it removes only known staging files. Before handoff, `Prepared::set_restart_args(...)` can persist the host's latest saved document or session arguments.
+
+Product-specific compatibility belongs in configuration:
+
+```rust
+# fn example() -> Result<(), String> {
+let mut config = rust_auto_updator::Config::new("account", "repository", "1.0.0", "Product")?;
+config.asset_suffixes = vec!["-x64".into()];
+config.legacy_executable_names = vec!["old-product-{version}-windows-x64.exe".into()];
+config.checksum_name = "{executable}.sha256".into();
+config.allow_asset_digest = true;
+config.expected_subsystem = Some(2); // Require a GUI executable when that is the product's contract.
+# Ok(()) }
+```
+
+The canonical product filename wins, followed by explicitly configured suffix and historical filename fallbacks. All selected asset URLs remain bound to the exact repository and release tag. Multi-file checksum manifests must name the exact executable; an explicitly configured `{executable}` checksum asset may instead contain one bare SHA-256 digest. Digest-only verification is disabled by default. When enabled it requires a valid GitHub `sha256:` digest; supplied checksum files are still validated and must agree with the digest. A malformed or redirected checksum file never falls back silently. Build metadata alone never triggers reinstallation.
+
+The library owns no renderer, application icon, tray icon or frame loop. Its worker waits on a channel between operations and emits wakes only for actual results or throttled download progress. Hosts must process those events without rendering hidden windows and must supply their own startup-check timer; `Controller::poll` never creates a recurring render timer.
+
+## Host integration
+
+Create a controller once, without making a startup request on the UI thread:
+
+```rust
+use rust_auto_updator::{Config, Controller};
+
+fn create_updates(ctx: egui::Context) -> Result<Controller, String> {
+    let mut config = Config::new(
+        "your-account", "your-repository", env!("CARGO_PKG_VERSION"), "YourProduct",
+    )?;
+    config.install.restart_args = vec!["--updated".into()];
+    config.install.rollback_args = vec![];
+    rust_auto_updator_egui::start(config, ctx)
+}
+```
+
+For another UI, call `Controller::new(config, wake)` and provide a callback that posts an event to that UI. The worker sleeps on its request channel between operations. Its callback must be thread-safe and nonblocking.
+
+On the host's existing logic tick or wake event:
+
+```rust
+# fn example(updates: &mut rust_auto_updator::Controller, saved_check_on_startup: bool) {
+let event = updates.poll(saved_check_on_startup);
+if event.checked {
+    // Persist rust_auto_updator::now() if the application tracks last-check time.
+}
+if event.ready_to_install {
+    // Take the prepared update, save settings and finish pending host work.
+    // Call handoff(&mut prepared) only after that work succeeds, then exit.
+    // A handoff error should be shown with updates.installation_failed(error).
+}
+# }
+```
+
+The host must provide a logic tick after the five-second startup delay, or call `check()` itself when its startup timer fires. `poll` does not create a timer or repaint loop. Pass the persisted startup preference every time; `false` prevents startup requests and leaves manual checks available. No poll call starts a download. A successful manual check suppresses a duplicate startup check for that launch.
+
+Render the panel wherever settings belong:
+
+```rust
+# fn example(ui: &mut egui::Ui, updates: &mut rust_auto_updator::Controller, saved_check_on_startup: &mut bool) {
+if rust_auto_updator_egui::show(ui, updates, saved_check_on_startup).preference_changed {
+    // Save the host application's preferences.
+}
+# }
+```
+
+Initialize the persisted preference to `true` for new installations. For an isolated preview, use `Controller::disabled(version, "Update checks are disabled in preview mode.")`; it creates no network worker.
+
+Optional shared styling is an explicit choice, made once during UI initialization:
+
+```rust
+# fn example(ctx: &egui::Context) {
+rust_auto_updator_egui::style::apply_dark_theme(ctx);
+# }
+```
+
+The module also exports palette tokens and `card`. The theme uses the installed Segoe UI font when available and falls back to egui's configured fonts; it does not bundle proprietary fonts. The update panel uses the host's current colors and widget styles.
+
+See [the compiling host example](crates/rust-auto-updator-egui/examples/integration.rs) for the complete save/handoff/error path.
+
+## Required executable protocol
+
+Route these internal arguments before single-instance acquisition, GUI creation, startup checks, or other application side effects:
+
+1. `--apply-update`: call `rust_auto_updator::apply_update(&config)` and exit. The newly downloaded executable acts as the helper. Pass the consuming product's version, not the library version.
+2. `--cleanup-update <directory>`: after the updated host initializes successfully, call `cleanup_after_update(directory, config.install.clone())`. Accept the application's configured restart arguments as well.
+
+For installation, take the `Prepared` value after `ready_to_install`, save user data, call `handoff(&mut prepared)`, and exit only if handoff succeeds. The helper waits up to 45 seconds for the original process, verifies that the installed hash has not changed, performs same-volume Windows replacement with a backup, and launches the target with the saved restart arguments plus `--cleanup-update <directory>`. If launching fails, it restores the previous EXE and uses the configured rollback arguments. Dropping a prepared update before handoff cleans its known staging files.
+
+The download must contain this helper protocol. There is no separate always-running updater binary. Keep `stage_prefix`, `helper_name` and the protocol stable between product releases. Only known updater files inside a validated staging folder are removed; settings remain the host's responsibility.
+
+Products that already require healthy-startup rollback can opt in with `config.install.startup_health_timeout = Some(Duration::from_secs(30))`. Call `cleanup_after_update` only after the first successful UI presentation. It verifies the running target and acknowledges that executable's hash; the helper accepts this acknowledgement before cleanup may remove the backup. If the child exits before acknowledgement, the previous executable is restored and restarted. If the child is still running at the timeout, its process and backup are preserved, with a diagnostic `health-timeout.txt` in the staging directory. A timeout or an uncertain process-query result never terminates the child or rolls back beneath a live process. The default policy retains rollback for launch failures without waiting for a first-frame acknowledgement.
+
+For an older product that launched the newly downloaded EXE with positional helper arguments, keep a narrow CLI adapter that validates its historical staging root, filename and argument shape, then calls `apply_legacy_update(&config, target, staged, sha256, parent_pid, ready_marker)`. The shared implementation verifies the helper and staged executable, creates a modern plan beside the installed target and launches the modern helper. A legacy ready marker, when needed, must equal `staged.with_extension("ready")`; it is created after helper launch. Helpers copied from an older installed version already carry their old installer implementation, so those products generally need only their existing restart/cleanup receipt adapter. Do not accept arbitrary legacy paths or duplicate the installer in the host.
+
+Product-specific helper failure reports can use `installation_target(&config)` to resolve a trusted installation target after modern staging, version and helper-hash validation. Portable user-data paths must be derived from that target rather than the helper's staging folder. Keep durable error presentation and the host's existing failure-log format in its small lifecycle adapter.
+
+## Release contract and scope
+
+- Current installer: portable single EXE on Windows. No MSI, macOS, Linux or archive installer is implemented. Release discovery and workflow types can compile on other platforms; download preparation and installation return an explicit unsupported-platform error there. Selecting a Windows EXE does not establish native macOS/Linux asset support.
+- Stable public GitHub releases with exact `vSEMVER` tags; drafts and prereleases are excluded.
+- Default asset: `ProductName-vVERSION.exe` and required `SHA256SUMS.txt` with a SHA-256 line for that exact filename. Compatibility policies above are explicit opt-ins. Download addresses must belong to the configured repository and tag. No GitHub token is needed.
+- Set `asset_suffix` to `-x64`, `-x86`, or `-arm64` only for releases offering several architectures. `architecture` controls PE validation independently of the filename. The default follows the consuming target architecture. x64 is exercised by the native smoke regression; x86/ARM64 installation is not runtime-certified.
+- HTTPS uses the platform certificate store. Download progress is throttled to roughly 100 ms. Size, checksum, architecture, truncated PE headers/sections, DLL and invalid entry-point failures leave the installed EXE intact. Optional PE subsystem restrictions distinguish GUI from console products. GitHub-provided digests, when present, must agree with the checksum file.
+- Default executable limit: 64 MiB. Configure `max_executable_size` for larger products. Checksums detect corruption; this is not an independent release-signing system.
+- Downloads and installation require an explicit user action. Startup checks are quiet and do not block launch; the host decides how to indicate an available update outside Settings.
+- In-place installation requires a writable executable directory. The library never elevates privileges, changes autostart registration, or chooses where user data is stored.
+
+## Real UI
+
+The shared panel and theme hosted in Multi-Monitor Brightness, captured by the actual CPU/GDI renderer in isolated preview mode. This is the host application's Settings screen, not a separate updater window.
+
+![Shared update panel in the host application's Settings screen](docs/screenshots/settings.png)
+
+## Verification
+
+On Windows with Rust 1.95 or newer:
+
+```powershell
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+cargo run -p rust-auto-updator --example native-smoke --features smoke-test --locked -- --test-updater
+```
+
+Unit regressions cover semantic version precedence, independent products, explicit legacy filenames and per-asset checksum templates, digest policy, repository binding, ambiguous checksums, corrupted/truncated/wrong-architecture PE files, complete section and entry-point validation, startup opt-out, duplicate requests, cancellation before network activity, process validation, recoverable replacement, rollback after restart failure, live-child preservation on health timeout, acknowledgement before exit and cleanup boundaries. The native smoke example replaces only an isolated executable fixture, waits for process exit, verifies backup and restart, exercises an actual Windows access-denied process query, and verifies rollback when a newly started child exits before startup acknowledgement. It makes no network request and opens no UI. The optional panel reuses the real host screenshot above; no application window or OS tray exists in this library to verify.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
