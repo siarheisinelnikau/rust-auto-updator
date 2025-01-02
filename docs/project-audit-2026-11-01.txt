@@ -1,0 +1,178 @@
+Rust project audit — 2026-11-01 (Europe/Minsk)
+
+Scope: 23 Windows applications and the rust-auto-updator workspace, 24 repositories.
+Work was delegated to repository-specific subtasks. No computer-use APIs, OS
+input injection, remote Git operations or publishing were used.
+
+Shared implementation: rust-auto-updator commit e1c6ceb.
+All 23 application manifests now reference the sibling shared core. Product
+adapters retain their own repository/version/assets, UI, settings and restart
+arguments; common discovery/download/verification/replacement lives in the core.
+Stable startup checks, persisted opt-out, manual checks and user-initiated
+installation are preserved. Existing updater protocols were adapted where needed.
+Core tests/native fixtures cover verified replacement and failed-startup rollback.
+Independent source review found regressions in startup health and durable errors;
+those findings were fixed and rechecked before final commits.
+
+Windows interfaces use native CPU/GDI or egui CPU rasterization with GDI.
+SecondScreen's UI OpenGL renderer was replaced. Its experimental IddCx virtual
+display driver still uses required D3D11 surfaces and was not run.
+Existing non-Windows graphics fallbacks were not rewritten or runtime-certified.
+
+Final executable icon resources were loaded/drawn without executing the target
+entrypoint and the resulting PNGs inspected. Missing EXE resources/native sizes
+and window/taskbar bindings were repaired. Tray art uses native small-icon
+metrics where present. A resource proof does not certify Explorer caching, actual
+OS tray appearance/clicks, menus, Alt-Tab, mixed-monitor DPI or perceived lag.
+
+Formatting, strict Clippy and optimized builds passed. Focused changed-code
+tests passed. The SpaceSniffer complete library suite has two sandbox-denied
+hardlink/junction fixture tests (82/84 passed); this is an explicit remaining gap.
+Hardware/network/OS-input tests intentionally skipped are reported per project.
+Zero sampled CPU is timer-quantized, not a claim of zero CPU cycles. GPU/desktop
+compositor latency and subjective responsiveness were not measured.
+
+Building an app or running standalone CI requires provision of the sibling
+rust-auto-updator source; the workspace has not been published as a dependency.
+Declared shared MSRV is 1.95; Rust 1.96.1 was exercised. Real updates were not
+installed into the user's applications. Update replacement tests used isolated
+fixtures only.
+
+DownloadManager was also being edited in another chat. Our migration/evidence
+commits preserve that chat's UI/documentation/screenshot work.
+
+Thirteen applications have bounded optimized native rendering measurements.
+Ten have no fresh native idle/hidden measurements because local AGENTS prohibit
+GUI launch; source/tests/resource proofs and available offscreen captures are
+reported separately. No universal full-workload performance pass is claimed.
+
+Per-repository results
+======================
+
+app-uninstaller
+  Commit(s): beb36d8
+  Checks: 31 tests, fmt, strict Clippy, optimized static build, seven packaged icon sizes
+  Runtime/evidence: Source/tests only; local AGENTS prohibits GUI launch.
+
+bandwidth-limiter
+  Commit(s): 38ea276
+  Checks: 38 tests passed, 2 ignored; app/service optimized builds and native icon proofs
+  Runtime/evidence: Source/tests only; local AGENTS prohibits GUI launch.
+
+desktop-organizer
+  Commit(s): 4191a95 (+ 37c9c5a)
+  Checks: 17 tests, Clippy, release/package; eight native icon sizes
+  Runtime/evidence: Finite optimized diagnostic: visible, post-navigation, hidden, restored idle each 5s: zero raster/layout/owner-draw deltas. Shell tray registration unavailable.
+
+download-manager
+  Commit(s): 15a1e12 + be14070
+  Checks: 26 tests, current-version 0.2.0 strict all-target Clippy and optimized static build; seven native icon sizes
+  Runtime/evidence: Final current-version finite diagnostic: visible 5s, hidden 3s, restored idle 5s zero layout/raster/present and sampled CPU. Restore one cached blit. Concurrent UI/documentation/screenshot work from another chat preserved and excluded from our commits.
+
+file-organizer
+  Commit(s): fe5e27c
+  Checks: 52 tests passed, 1 ignored; fmt, strict Clippy, release and nine icon frames
+  Runtime/evidence: 19 real screens captured offscreen; native idle/hidden performance unmeasured.
+
+folder-icons
+  Commit(s): f64a6b7
+  Checks: 18 tests, fmt, strict Clippy, release and nine icon frames
+  Runtime/evidence: Finite optimized diagnostic: visible 5s, hidden 5s, returned idle 3s: zero frames/presents. Restore: one frame/present.
+
+internet-uptime-monitor
+  Commit(s): 42ce581
+  Checks: 25 tests passed, 2 ignored; strict Clippy, release and eight icon sizes
+  Runtime/evidence: Finite optimized diagnostic: visible 5s and hidden 6s zero layout/raster/present; restore 6s three useful frames. Windows CPU/GDI; non-Windows fallback unchanged.
+
+luma-keys
+  Commit(s): d17e1cc
+  Checks: 21 tests passed, 2 ignored; strict Clippy, release/package and eight icon sizes
+  Runtime/evidence: Finite optimized settings/popup/hidden 5s samples: zero UI/raster/present. Useful slider frames. Tray callback test stopped at unavailable Shell tray rectangle. See docs/verification-2026-11-01.txt in consumer.
+
+magic-language-switcher
+  Commit(s): c89c7c4 + ec92a3e
+  Checks: 29 unit tests plus updater integration; 4 interactive tests ignored; fmt, strict Clippy, release, eight icon sizes and final native rendering diagnostic
+  Runtime/evidence: Finite optimized own-window diagnostic PID 49308: visible/hidden/minimized/restored 5s idle samples all zero paint/raster/present and timer-quantized 0.0% one-core CPU. Startup/restore useful drawing occurred outside samples. Preview disables tray, global hooks/hotkeys, correction worker, network and persistence. No real tray/input/GPU-latency certification.
+
+photo-enhancer
+  Commit(s): 9269b8e
+  Checks: 27 tests, fmt, strict Clippy, optimized package and nine icon sizes
+  Runtime/evidence: Source/tests only; local AGENTS prohibits GUI launch. Removed 150ms update repaint polling.
+
+print-helper
+  Commit(s): 26ee05d
+  Checks: 42 tests, fmt, strict Clippy, optimized package and nine icon sizes
+  Runtime/evidence: Source/tests only; local AGENTS prohibits GUI launch.
+
+rust-auto-updator
+  Commit(s): e1c6ceb
+  Checks: 19 tests, fmt, strict workspace Clippy; three native smoke modes including failed-startup rollback
+  Runtime/evidence: Library creates no window/tray; no icon applicable. Native smoke used isolated executable fixtures, no network.
+
+screen-recorder
+  Commit(s): f31c45d
+  Checks: 21 tests, strict Clippy, optimized static build and eight icon sizes
+  Runtime/evidence: Source/tests only; local AGENTS prohibits GUI launch. UI CPU/GDI; no tray by design.
+
+scribe-seek
+  Commit(s): b800304
+  Checks: 16 tests, localization checks, strict Clippy, optimized release and native icon proofs
+  Runtime/evidence: Finite optimized diagnostic: visible 5s and hidden 6s zero layout/raster/present; restore 6s one useful frame. Windows CPU/GDI; non-Windows Glow fallback unchanged.
+
+second-screen
+  Commit(s): 000866f
+  Checks: 13 Rust tests, 3 viewer tests; intentional hardware/socket ignores; strict Clippy, release, eight icon sizes
+  Runtime/evidence: Replaced Windows UI OpenGL with CPU/GDI; runtime performance unmeasured under local no-launch AGENTS. Experimental IddCx driver retains its necessary D3D11 display surfaces and was not run.
+
+slideshow-maker
+  Commit(s): 174bcca
+  Checks: 21 tests, fmt, Clippy, static release and 11 icon sizes
+  Runtime/evidence: Source/tests only; local AGENTS prohibits GUI launch. Removed hidden cosmetic repaint deadlines.
+
+sound-lock
+  Commit(s): 4ce9f4e
+  Checks: 47 tests passed, 2 ignored; fmt, strict Clippy, release/package, eight native icon sizes; actual published 0.1.3 helper compatibility fixture passed
+  Runtime/evidence: Finite optimized Settings/hidden samples: zero painted frames/logic calls after warm-up; sampled CPU below timer resolution. Native small-metric tray; no real tray click/perceptual test.
+
+space-sniffer
+  Commit(s): a7dab52
+  Checks: 25 GUI, 2 updater, 3 packaging tests passed; full library 82/84 (two hardlink/junction tests denied by sandbox); fmt, Clippy and release passed; eight icon sizes
+  Runtime/evidence: Finite optimized visible/minimized/restored diagnostic: counters flat within settled intervals; sampled CPU below timer resolution. No tray by design.
+
+subscriptions-reminder
+  Commit(s): 2ad7e68
+  Checks: 38 tests passed, 3 OS-input tests ignored; fmt, strict Clippy, release and nine icon sizes
+  Runtime/evidence: Finite normal-shell optimized diagnostic: visible, minimized, restored idle, hidden all zero layout/raster/present; native window/taskbar icons matched. No tray clicks.
+
+text-reader
+  Commit(s): fa3a8b9
+  Checks: 19 tests, fmt, strict Clippy, static release and nine icon sizes
+  Runtime/evidence: Finite optimized visible/minimized/restored idle 5s each: zero layout/raster/present; actual WM_GETICON 16/32px at 100%.
+
+usb-eject
+  Commit(s): a5f31b2
+  Checks: 17 tests, fmt, strict Clippy, optimized package and eight icon sizes
+  Runtime/evidence: Source/tests only; local AGENTS prohibits GUI launch. Native CPU/GDI; tray uses native small-icon metric.
+
+website-blocker
+  Commit(s): af683d0
+  Checks: 16 Rust and 7 Node tests; fmt, strict Clippy, release and nine icon sizes
+  Runtime/evidence: Finite optimized visible/minimized/restored idle/hidden diagnostic: zero layout/raster/present; native 16/32px icons match. No tray by design.
+
+window-tabs
+  Commit(s): 793927d
+  Checks: 28 tests, fmt, strict Clippy, optimized package and nine icon sizes
+  Runtime/evidence: Source/tests only; local AGENTS prohibits GUI launch. Fixed quoted resource-name mismatch, native small/large HICON and hidden owner-draw guards. No tray by design.
+
+world-clock
+  Commit(s): c66a913 + ef4e9c8
+  Checks: 32 tests, fmt, strict Clippy, release/package, eight icon sizes; GDI tests at 96/120/144/192 DPI and final native rendering diagnostic
+  Runtime/evidence: Finite optimized own-window diagnostic PID 49312: visible/hidden/minimized/restored 5s idle samples all zero paint/raster/present and timer-quantized 0.0% one-core CPU. Startup and real app restore produced two useful CPU frames/GDI calls total. An earlier hidden sample crossed a real minute change without rendering. Fixture disables tracker/taskbar attachment/network/persistence. New Updates dialog screenshot remains unavailable.
+
+Remaining visual documentation gaps: PrintHelper main/Settings screenshots
+remain unavailable under its local no-launch instructions. WorldClock's newly
+added Updates dialog has not yet been captured as a real application screenshot.
+
+Native idle/hidden measurements are deliberately distinguished from source-only
+checks above. Projects whose local AGENTS prohibit GUI launch were not launched.
+Use each repository's validation notes/scripts for reproducible detailed evidence.

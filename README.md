@@ -162,6 +162,8 @@ The shared panel and theme hosted in Multi-Monitor Brightness, captured by the a
 
 ## Verification
 
+The [cross-project audit](docs/project-audit-2026-11-01.txt) records the local migration commits, icon checks, Windows rendering measurements and remaining verification gaps for all 23 consuming applications.
+
 On Windows with Rust 1.95 or newer:
 
 ```powershell
