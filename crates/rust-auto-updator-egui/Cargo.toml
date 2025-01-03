@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Reusable egui update panel and optional shared dark theme"
 readme = "README.md"
 

@@ -7,6 +7,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
+repository = "https://github.com/siarheisinelnikau/rust-auto-updator"
 
 [workspace.dependencies]
 rust-auto-updator = { version = "0.1.0", path = "crates/rust-auto-updator" }

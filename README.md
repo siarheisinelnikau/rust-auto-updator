@@ -175,6 +175,12 @@ cargo run -p rust-auto-updator --example native-smoke --features smoke-test --lo
 
 Unit regressions cover semantic version precedence, independent products, explicit legacy filenames and per-asset checksum templates, digest policy, repository binding, ambiguous checksums, corrupted/truncated/wrong-architecture PE files, complete section and entry-point validation, startup opt-out, duplicate requests, cancellation before network activity, process validation, recoverable replacement, rollback after restart failure, live-child preservation on health timeout, acknowledgement before exit and cleanup boundaries. The native smoke example replaces only an isolated executable fixture, waits for process exit, verifies backup and restart, exercises an actual Windows access-denied process query, and verifies rollback when a newly started child exits before startup acknowledgement. It makes no network request and opens no UI. The optional panel reuses the real host screenshot above; no application window or OS tray exists in this library to verify.
 
+## Source release preparation
+
+The canonical repository is `siarheisinelnikau/rust-auto-updator`. `RELEASE_NOTES.md` describes the initial `v0.1.0` source release. After committing the source, `./scripts/package.ps1` creates `dist/RustAutoUpdator-v0.1.0-source.zip` with a SHA-256 manifest and MIT notice; it makes no remote request and does not publish to GitHub or crates.io. Each crate also carries its own copy of the MIT notice. The Windows CI workflow runs formatting, strict Clippy, workspace tests and the isolated native replacement/rollback smoke test.
+
+Publish the library repository and `v0.1.0` tag before consumer workflows that check out that tag. Startup Manager uses the renderer-independent core with egui 0.33, its own CPU/GDI host, settings store and shutdown lifecycle; it does not require the optional egui 0.37 panel.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
