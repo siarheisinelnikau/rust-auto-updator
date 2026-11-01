@@ -4,8 +4,10 @@ Set-StrictMode -Version Latest
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location -LiteralPath $projectRoot
 try {
-    $version = [regex]::Match((Get-Content -Raw -LiteralPath 'Cargo.toml'), '(?m)^version = "([^"]+)"').Groups[1].Value
-    if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Expected a stable workspace version' }
+    $manifest = Get-Content -Raw -LiteralPath 'Cargo.toml'
+    $releaseSection = [regex]::Match($manifest, '(?ms)^\[workspace\.metadata\.release\]\s*(.*?)(?=^\[|\z)').Groups[1].Value
+    $version = [regex]::Match($releaseSection, '(?m)^version = "([^"]+)"').Groups[1].Value
+    if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Expected a stable workspace.metadata.release version' }
     if (git status --porcelain) { throw 'Commit the release sources before packaging' }
     New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
     $asset = "RustAutoUpdator-v$version-source.zip"

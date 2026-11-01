@@ -1,15 +1,26 @@
 //! Compiling integration skeleton. The host supplies its window and event loop.
 use rust_auto_updator::{Config, Controller, Prepared};
+use rust_auto_updator_egui::{Language, style::Theme};
 
 struct Updates {
     controller: Controller,
     check_on_startup: bool,
     pending: Option<Prepared>,
     settings_dirty: bool,
+    language: Language,
+    theme: Theme,
 }
 
 impl Updates {
-    fn new(ctx: egui::Context, saved_preference: Option<bool>) -> Result<Self, String> {
+    fn new(
+        ctx: egui::Context,
+        saved_preference: Option<bool>,
+        saved_language: Option<&str>,
+        saved_theme: Option<&str>,
+    ) -> Result<Self, String> {
+        let language = Language::from_code(saved_language.unwrap_or("en"));
+        let theme = Theme::from_code(saved_theme.unwrap_or("dark"));
+        rust_auto_updator_egui::style::apply_theme(&ctx, theme);
         let mut config = Config::new(
             "your-account",
             "your-repository",
@@ -22,6 +33,8 @@ impl Updates {
             check_on_startup: saved_preference.unwrap_or(true),
             pending: None,
             settings_dirty: false,
+            language,
+            theme,
         })
     }
 
@@ -33,8 +46,40 @@ impl Updates {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
-        if rust_auto_updator_egui::show(ui, &mut self.controller, &mut self.check_on_startup)
-            .preference_changed
+        let old_language = self.language;
+        let old_theme = self.theme;
+        ui.horizontal(|ui| {
+            ui.label(self.language.text().language);
+            egui::ComboBox::from_id_salt("interface-language")
+                .selected_text(self.language.native_name())
+                .show_ui(ui, |ui| {
+                    for language in Language::ALL {
+                        ui.selectable_value(&mut self.language, language, language.native_name());
+                    }
+                });
+            ui.label(self.language.text().theme);
+            egui::ComboBox::from_id_salt("interface-theme")
+                .selected_text(self.theme.label(self.language))
+                .show_ui(ui, |ui| {
+                    for theme in Theme::ALL {
+                        ui.selectable_value(&mut self.theme, theme, theme.label(self.language));
+                    }
+                });
+        });
+        if self.theme != old_theme {
+            rust_auto_updator_egui::style::apply_theme(ui.ctx(), self.theme);
+        }
+        if self.language != old_language || self.theme != old_theme {
+            // Persist language.code() and theme.code() in the host's settings.
+            self.settings_dirty = true;
+        }
+        if rust_auto_updator_egui::show_localized(
+            ui,
+            &mut self.controller,
+            &mut self.check_on_startup,
+            self.language,
+        )
+        .preference_changed
         {
             self.settings_dirty = true;
         }

@@ -9,6 +9,11 @@ rust-version = "1.95"
 license = "MIT"
 repository = "https://github.com/siarheisinelnikau/rust-auto-updator"
 
+# Source releases can contain additive integration work without changing the
+# package versions pinned by consuming applications.
+[workspace.metadata.release]
+version = "0.2.0"
+
 [workspace.dependencies]
 rust-auto-updator = { version = "0.1.0", path = "crates/rust-auto-updator" }
 egui = { version = "=0.37.0", default-features = false }
