@@ -135,7 +135,7 @@ pub fn verify_pe_subsystem(
     file.read_exact(&mut table)
         .map_err(|e| format!("Truncated PE section table: {e}"))?;
     let mut executable_entry = false;
-    for section in table.chunks_exact(40) {
+    for section in table.as_chunks::<40>().0 {
         let virtual_size = read_u32(section, 8);
         let address = read_u32(section, 12);
         let raw_size = read_u32(section, 16);
