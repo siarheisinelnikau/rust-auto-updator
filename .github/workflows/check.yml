@@ -14,3 +14,28 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - run: cargo test --workspace --all-features --locked
       - run: cargo run -p rust-auto-updator --example native-smoke --features smoke-test --locked -- --test-updater
+
+  localization-release:
+    name: Publish the verified source distribution
+    needs: windows
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Release localization v')
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: localization-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Stage the tested source archive and checksum
+        shell: pwsh
+        run: ./scripts/stage-localization-source-release.ps1
+      - name: Publish only the complete verified source distribution
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const publish = require('./scripts/publish-localization-release.cjs');
+            await publish({github, context, core});
