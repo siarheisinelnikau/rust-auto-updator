@@ -8,10 +8,10 @@ Reusable GitHub release updates for portable Windows Rust applications, with an 
 | --- | --- |
 | `rust-auto-updator` | Release discovery, semantic versions, HTTPS download, size/SHA-256/PE verification, worker events, workflow state, Windows replacement and restart |
 | `rust-auto-updator-egui` | Update panel and event-loop wake adapter, using the host application's egui theme |
-| `rust-auto-updator-egui::style` | Optional dark palette, typography, spacing, theme installation and card container |
+| `rust-auto-updator-egui::style` | Optional light/dark palettes, typography, spacing, theme installation and card container |
 | Consuming application | Repository/version/asset configuration, persisted preferences, its own renderer, CLI routing, saving data and exiting before installation |
 
-The core does not depend on egui. The panel never installs a global theme. Applications may use the core with any UI, use the panel with their own theme, or explicitly opt into the supplied dark theme. Neither crate owns a window, renderer, tray, settings file, or application event loop.
+The core does not depend on egui. The panel never installs a global theme. Applications may use the core with any UI, use the panel with their own theme, or explicitly opt into the supplied light or dark theme. Neither crate owns a window, renderer, tray, settings file, or application event loop.
 
 ```text
 crates/
@@ -25,6 +25,7 @@ crates/
   rust-auto-updator-egui/src/
     lib.rs         reusable panel and egui wake adapter
     style.rs       optional shared visual system
+    localization.rs built-in panel catalogs and stable language codes
 ```
 
 ## Add to another project
@@ -122,7 +123,37 @@ rust_auto_updator_egui::style::apply_dark_theme(ctx);
 # }
 ```
 
-The module also exports palette tokens and `card`. The theme uses the installed Segoe UI font when available and falls back to egui's configured fonts; it does not bundle proprietary fonts. The update panel uses the host's current colors and widget styles.
+The module also exports palette tokens and `card`. The theme uses the installed Segoe UI font when available and falls back to egui's configured fonts; it does not bundle proprietary fonts. The update panel and `card` use the host's current colors and widget styles.
+
+## Language and appearance
+
+The optional panel includes complete English, Russian, French, German, Spanish and Italian catalogs. Existing `show` calls keep their English behavior. To use a saved interface language, pass it explicitly:
+
+```rust
+# fn example(ui: &mut egui::Ui, updates: &mut rust_auto_updator::Controller, saved_startup: &mut bool, saved_language: &str) {
+let language = rust_auto_updator_egui::Language::from_code(saved_language);
+let response = rust_auto_updator_egui::show_localized(ui, updates, saved_startup, language);
+if response.preference_changed {
+    // Persist the startup-check preference in the host application's settings.
+}
+# }
+```
+
+Language codes are `en`, `ru`, `fr`, `de`, `es` and `it`; unknown values fall back to English. Regional codes such as `fr-CA` resolve to the base language. Use `Language::ALL` and `native_name()` to build an easily recoverable language selector, then persist `Language::code()`. `show_with_text` also accepts a host-owned `PanelText` catalog. Version templates preserve `{version}`; release notes, product-specific disabled reasons and technical error details remain their original text, with localized status/error headings.
+
+The optional shared style supports an explicit light/dark preference:
+
+```rust
+# fn example(ctx: &egui::Context, saved_theme: &str) {
+use rust_auto_updator_egui::style::{Theme, apply_theme};
+let theme = Theme::from_code(saved_theme);
+apply_theme(ctx, theme);
+# }
+```
+
+Call `apply_theme` once during initialization and when the user changes the preference. Persist `Theme::code()` (`light` or `dark`) in the host settings. `Theme::label(language)` provides localized selector labels; `apply_light_theme` and the existing `apply_dark_theme` are convenience entry points. The old dark palette exports remain available. `palette(theme)` exposes semantic roles for custom controls, and shared cards follow the current host theme.
+
+These functions do not create windows, save preferences, start network requests, poll frames or add timers. The host provides the discoverable Language and Theme controls and saves changes alongside its other settings. The [compiling integration example](crates/rust-auto-updator-egui/examples/integration.rs) shows both selectors updating the panel immediately. Hosts with an existing System theme can continue supplying their own egui visuals and use the localized panel without applying a shared theme.
 
 See [the compiling host example](crates/rust-auto-updator-egui/examples/integration.rs) for the complete save/handoff/error path.
 
@@ -156,7 +187,7 @@ Product-specific helper failure reports can use `installation_target(&config)` t
 
 ## Real UI
 
-The shared panel and theme hosted in Multi-Monitor Brightness, captured by the actual CPU/GDI renderer in isolated preview mode. This is the host application's Settings screen, not a separate updater window.
+Historical `v0.1.0` integration screenshot: the shared English panel and dark theme hosted in Multi-Monitor Brightness, captured by the actual CPU/GDI renderer in isolated preview mode. This is the host application's Settings screen, not a separate updater window. It does not demonstrate the new translated catalogs or light palette. New host screenshots and rendered layout checks for these additions remain pending; the library has no standalone window or Settings screen to capture.
 
 ![Shared update panel in the host application's Settings screen](docs/screenshots/settings.png)
 
@@ -173,11 +204,13 @@ cargo test --workspace --all-features --locked
 cargo run -p rust-auto-updator --example native-smoke --features smoke-test --locked -- --test-updater
 ```
 
-Unit regressions cover semantic version precedence, independent products, explicit legacy filenames and per-asset checksum templates, digest policy, repository binding, ambiguous checksums, corrupted/truncated/wrong-architecture PE files, complete section and entry-point validation, startup opt-out, duplicate requests, cancellation before network activity, process validation, recoverable replacement, rollback after restart failure, live-child preservation on health timeout, acknowledgement before exit and cleanup boundaries. The native smoke example replaces only an isolated executable fixture, waits for process exit, verifies backup and restart, exercises an actual Windows access-denied process query, and verifies rollback when a newly started child exits before startup acknowledgement. It makes no network request and opens no UI. The optional panel reuses the real host screenshot above; no application window or OS tray exists in this library to verify.
+Unit regressions cover semantic version precedence, independent products, explicit legacy filenames and per-asset checksum templates, digest policy, repository binding, ambiguous checksums, corrupted/truncated/wrong-architecture PE files, complete section and entry-point validation, startup opt-out, duplicate requests, cancellation before network activity, process validation, recoverable replacement, rollback after restart failure, live-child preservation on health timeout, acknowledgement before exit and cleanup boundaries. Panel regressions check every catalog for missing text and version placeholders, saved/regional language codes and English fallback, actual egui visual changes across theme switches, and body/secondary text contrast on both palettes. These are source/headless checks, not rendered visual or idle/hidden lifecycle certification for a consuming application. The native smoke example replaces only an isolated executable fixture, waits for process exit, verifies backup and restart, exercises an actual Windows access-denied process query, and verifies rollback when a newly started child exits before startup acknowledgement. It makes no network request and opens no UI. No application window or OS tray exists in this library to verify.
 
 ## Source release preparation
 
-The canonical repository is `siarheisinelnikau/rust-auto-updator`. `RELEASE_NOTES.md` describes the initial `v0.1.0` source release. After committing the source, `./scripts/package.ps1` creates `dist/RustAutoUpdator-v0.1.0-source.zip` with a SHA-256 manifest and MIT notice; it makes no remote request and does not publish to GitHub or crates.io. Each crate also carries its own copy of the MIT notice. The Windows CI workflow runs formatting, strict Clippy, workspace tests and the isolated native replacement/rollback smoke test.
+The canonical repository is `siarheisinelnikau/rust-auto-updator`. [The current release notes](docs/releases/v0.2.0.md) describe `v0.2.0`; `RELEASE_NOTES.md` preserves the initial `v0.1.0` notes. After committing the source, `./scripts/package.ps1` creates `dist/RustAutoUpdator-v0.2.0-source.zip` with matching release notes, a SHA-256 manifest and MIT notice; it makes no remote request and does not publish to GitHub or crates.io. Each crate also carries its own copy of the MIT notice. The Windows CI workflow runs formatting, strict Clippy, workspace tests and the isolated native replacement/rollback smoke test.
+
+The source-release version is stored in `workspace.metadata.release.version`, independently of the Cargo package versions. Both crates remain `0.1.0` in this source release: the new APIs are additive and no registry package is being published. This preserves existing consumers' local lockfiles and pinned `v0.1.0` integrations. Consumers must explicitly adopt the new source revision to use localized panel APIs or the light theme; existing pins are not silently changed.
 
 Publish the library repository and `v0.1.0` tag before consumer workflows that check out that tag. Startup Manager uses the renderer-independent core with egui 0.33, its own CPU/GDI host, settings store and shutdown lifecycle; it does not require the optional egui 0.37 panel.
 
