@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     ptr,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -90,14 +90,35 @@ pub(crate) fn new_stage(parent: &Path, options: &InstallOptions) -> Result<PathB
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let path = parent.join(format!(
-        "{}{}-{stamp}",
-        options.stage_prefix,
-        std::process::id()
-    ));
-    fs::create_dir(&path)
-        .map_err(|e| format!("The executable's folder must be writable to update in place: {e}"))?;
-    Ok(path)
+    new_stage_with_stamp(parent, options, stamp)
+}
+
+fn new_stage_with_stamp(
+    parent: &Path,
+    options: &InstallOptions,
+    stamp: u128,
+) -> Result<PathBuf, String> {
+    static NEXT_STAGE_ID: AtomicU64 = AtomicU64::new(0);
+    // Windows clock ticks can be shared by concurrent preparations. A process-
+    // local sequence prevents collisions; create_dir still owns the final claim.
+    for _ in 0..32 {
+        let sequence = NEXT_STAGE_ID.fetch_add(1, Ordering::Relaxed);
+        let path = parent.join(format!(
+            "{}{}-{stamp}-{sequence}",
+            options.stage_prefix,
+            std::process::id()
+        ));
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "The executable's folder must be writable to update in place: {error}"
+                ));
+            }
+        }
+    }
+    Err("Cannot create a unique update staging folder.".into())
 }
 
 pub(crate) fn prepare(
@@ -907,4 +928,25 @@ fn smoke_replacement(config: &Config, query_denied: bool, fail_health: bool) -> 
         "PASS wait, verified replacement, backup, restart and cleanup (query denied: {query_denied}, startup failure rollback: {fail_health})"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod stage_directory_tests {
+    use super::*;
+
+    #[test]
+    fn preparations_in_the_same_clock_tick_get_independent_folders() {
+        let options = InstallOptions::default();
+        let first = new_stage_with_stamp(&std::env::temp_dir(), &options, 0).unwrap();
+        fs::write(first.join("existing.txt"), b"keep first preparation").unwrap();
+        let second = new_stage_with_stamp(&std::env::temp_dir(), &options, 0).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(
+            fs::read(first.join("existing.txt")).unwrap(),
+            b"keep first preparation"
+        );
+        fs::remove_file(first.join("existing.txt")).unwrap();
+        fs::remove_dir(first).unwrap();
+        fs::remove_dir(second).unwrap();
+    }
 }
