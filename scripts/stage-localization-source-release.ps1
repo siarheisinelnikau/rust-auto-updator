@@ -7,7 +7,7 @@ $version = [regex]::Match($section, '(?m)^version\s*=\s*"(\d+\.\d+\.\d+)"\s*$').
 if (-not $version) { throw 'Expected a stable source distribution version in workspace.metadata.release.' }
 $event = Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
 $subject = ($event.head_commit.message -split "`n")[0].TrimEnd("`r")
-if ($env:GITHUB_EVENT_NAME -ne 'push' -or $env:GITHUB_REF -ne 'refs/heads/main' -or $subject -cne "Release localization v$version") {
+if ($env:GITHUB_EVENT_NAME -ne 'push' -or $env:GITHUB_REF -ne 'refs/heads/main' -or $subject -cne "Release v$version") {
     throw 'The source release requires an explicit final release commit matching its version.'
 }
 $configuration = Get-Content -LiteralPath scripts/localization-release.json -Raw | ConvertFrom-Json

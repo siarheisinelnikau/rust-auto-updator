@@ -1,4 +1,5 @@
-//! Compiling integration skeleton. The host supplies its window and event loop.
+//! Windows portable integration skeleton. The host supplies its window/event loop.
+//! Debian hosts must run handoff on a worker, retaining the UI until it succeeds.
 use rust_auto_updator::{Config, Controller, Prepared};
 use rust_auto_updator_egui::{Language, style::Theme};
 

@@ -1,12 +1,49 @@
 # Rust Auto Updator
 
-Reusable GitHub release updates for portable Windows Rust applications, with an optional egui panel and shared visual theme. The core is shared by the sibling Rust applications; each product keeps its repository identity, settings, renderer and shutdown lifecycle.
+Reusable GitHub release updates for portable Windows executables and Ubuntu/Debian packages, with an optional egui panel and shared visual theme. The core is shared by the sibling Rust applications; each product keeps its repository identity, settings, renderer and shutdown lifecycle.
+
+## Ubuntu and Debian packages
+
+Use `Config::debian("owner", "repository", env!("CARGO_PKG_VERSION"), "package-name")`
+and release `package-name_VERSION_amd64.deb` (or the configured architecture's
+`arm64`/`i386` asset). `SHA256SUMS.txt` can list Windows and Linux assets together.
+The optional GitHub asset-digest fallback retains the same explicit opt-in.
+Downloads share the Windows pipeline: repository/version binding, cancellation,
+bounded streaming, byte count and SHA-256 checks. Linux additionally checks the
+Debian package name, version and architecture with `dpkg-deb`.
+
+The running executable must belong to the configured installed Debian package.
+Install a source build's first `.deb` manually before enabling this workflow.
+`prepare_download_cancellable` only downloads and verifies; it never installs.
+Call `handoff` **on a worker thread**, after an explicit install action and saving
+host data. It waits for `pkexec apt-get` and the desktop password prompt while
+the host remains responsive. On cancellation or failure it returns an error;
+keep the host open and retain `Prepared` for retry. On success, close the host.
+An unprivileged helper waits for that exact parent process to exit, then starts
+the installed executable with the saved arguments and removes its private stage.
+
+```rust,ignore
+// Use the host's existing worker/result queue; never block its UI thread.
+std::thread::spawn(move || {
+    let result = rust_auto_updator::handoff(&mut prepared);
+    send_install_result(prepared, result); // Host closes only for Ok(()).
+    wake_host();
+});
+```
+
+Packages require apt, dpkg and `pkexec` (provided by `pkexec` or `policykit-1` on
+Ubuntu), plus a desktop polkit authentication agent. The installer forbids apt
+removals and gives an existing package-manager operation two minutes to finish.
+It never overwrites `/usr/bin` directly and never runs the application as root.
+Package-manager failures leave recovery to apt/dpkg; the Windows EXE backup and
+startup-health rollback protocol does not apply to Debian packages. The Linux
+private staging directory is owned by the current user with mode 0700.
 
 ## Separation
 
 | Package / module | Responsibility |
 | --- | --- |
-| `rust-auto-updator` | Release discovery, semantic versions, HTTPS download, size/SHA-256/PE verification, worker events, workflow state, Windows replacement and restart |
+| `rust-auto-updator` | Release discovery, semantic versions, HTTPS download, size/SHA-256/PE verification, worker events, workflow state, Windows replacement, Debian package installation and restart |
 | `rust-auto-updator-egui` | Update panel and event-loop wake adapter, using the host application's egui theme |
 | `rust-auto-updator-egui::style` | Optional light/dark palettes, typography, spacing, theme installation and card container |
 | Consuming application | Repository/version/asset configuration, persisted preferences, its own renderer, CLI routing, saving data and exiting before installation |
@@ -41,7 +78,7 @@ egui = { version = "=0.37.0", default-features = false, features = ["default_fon
 
 Omit the egui package when building a different UI. This workspace is currently a local dependency, not a published registry or GitHub package. CI must provision the same sibling folder; copying only the consuming repository is insufficient. Once hosted, the path entries can be replaced with Git dependencies pinned to a revision or published package versions.
 
-The workspace requires Rust 1.95, matching the optional egui 0.37 dependency. Verification in this checkout used Rust 1.96.1; the exact minimum toolchain and non-Windows targets have not been exercised. Include this workspace's [MIT notice](LICENSE) when redistributing its code or linked executables.
+The workspace requires Rust 1.95, matching the optional egui 0.37 dependency. The Ubuntu implementation was checked locally with Rust 1.95. Windows replacement remains covered by native CI; other Unix installers are not implemented. Include this workspace's [MIT notice](LICENSE) when redistributing its code or linked executables.
 
 ## Existing workers and product compatibility
 
@@ -164,7 +201,7 @@ Route these internal arguments before single-instance acquisition, GUI creation,
 1. `--apply-update`: call `rust_auto_updator::apply_update(&config)` and exit. The newly downloaded executable acts as the helper. Pass the consuming product's version, not the library version.
 2. `--cleanup-update <directory>`: after the updated host initializes successfully, call `cleanup_after_update(directory, config.install.clone())`. Accept the application's configured restart arguments as well.
 
-For installation, take the `Prepared` value after `ready_to_install`, save user data, call `handoff(&mut prepared)`, and exit only if handoff succeeds. The helper waits up to 45 seconds for the original process, verifies that the installed hash has not changed, performs same-volume Windows replacement with a backup, and launches the target with the saved restart arguments plus `--cleanup-update <directory>`. If launching fails, it restores the previous EXE and uses the configured rollback arguments. Dropping a prepared update before handoff cleans its known staging files.
+For Windows installation, take the `Prepared` value after `ready_to_install`, save user data, call `handoff(&mut prepared)`, and exit only if handoff succeeds. The helper waits up to 45 seconds for the original process, verifies that the installed hash has not changed, performs same-volume Windows replacement with a backup, and launches the target with the saved restart arguments plus `--cleanup-update <directory>`. If launching fails, it restores the previous EXE and uses the configured rollback arguments. Dropping a prepared update before handoff cleans its known staging files.
 
 The download must contain this helper protocol. There is no separate always-running updater binary. Keep `stage_prefix`, `helper_name` and the protocol stable between product releases. Only known updater files inside a validated staging folder are removed; settings remain the host's responsibility.
 
@@ -176,7 +213,7 @@ Product-specific helper failure reports can use `installation_target(&config)` t
 
 ## Release contract and scope
 
-- Current installer: portable single EXE on Windows. No MSI, macOS, Linux or archive installer is implemented. Release discovery and workflow types can compile on other platforms; download preparation and installation return an explicit unsupported-platform error there. Selecting a Windows EXE does not establish native macOS/Linux asset support.
+- Installers: portable single EXE on Windows and dpkg-managed `.deb` packages on Linux. No MSI, macOS, AppImage or archive installer is implemented. `Config::new` retains the Windows contract; Linux clients explicitly choose `Config::debian`. Unsupported configurations fail before installation.
 - Stable public GitHub releases with exact `vSEMVER` tags; drafts and prereleases are excluded.
 - Default asset: `ProductName-vVERSION.exe` and required `SHA256SUMS.txt` with a SHA-256 line for that exact filename. Compatibility policies above are explicit opt-ins. Download addresses must belong to the configured repository and tag. No GitHub token is needed.
 - Set `asset_suffix` to `-x64`, `-x86`, or `-arm64` only for releases offering several architectures. `architecture` controls PE validation independently of the filename. The default follows the consuming target architecture. x64 is exercised by the native smoke regression; x86/ARM64 installation is not runtime-certified.

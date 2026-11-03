@@ -3,17 +3,16 @@ members = ["crates/rust-auto-updator", "crates/rust-auto-updator-egui"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
 repository = "https://github.com/siarheisinelnikau/rust-auto-updator"
 
-# Source releases can contain additive integration work without changing the
-# package versions pinned by consuming applications.
+# Source distribution and crate versions advance together for Debian support.
 [workspace.metadata.release]
-version = "0.2.0"
+version = "0.3.0"
 
 [workspace.dependencies]
-rust-auto-updator = { version = "0.1.0", path = "crates/rust-auto-updator" }
+rust-auto-updator = { version = "0.3.0", path = "crates/rust-auto-updator" }
 egui = { version = "=0.37.0", default-features = false }

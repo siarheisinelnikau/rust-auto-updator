@@ -1,18 +1,23 @@
-//! GitHub release discovery, verified downloads and in-place Windows EXE updates.
+//! GitHub release discovery, verified downloads, Windows EXE and Debian updates.
 //! No UI runtime, settings store, renderer, or application-specific CLI is required.
 
 mod config;
 mod controller;
+#[cfg(any(windows, target_os = "linux"))]
+mod download;
 mod github;
 #[cfg(windows)]
 mod install;
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+#[path = "linux_install.rs"]
+mod install;
+#[cfg(not(any(windows, target_os = "linux")))]
 #[path = "unsupported_install.rs"]
 mod install;
 mod service;
 mod verify;
 
-pub use config::{Architecture, Config, InstallOptions};
+pub use config::{Architecture, Config, InstallMode, InstallOptions};
 pub use controller::{Controller, Poll, State};
 pub use github::{Release, check_latest, parse_release};
 #[cfg(feature = "smoke-test")]

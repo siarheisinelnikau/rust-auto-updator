@@ -1,6 +1,6 @@
 use semver::Version;
 
-/// PE machine type to accept after checksum verification.
+/// Executable machine type or Debian package architecture to accept.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Architecture {
     X64,
@@ -14,6 +14,24 @@ impl Architecture {
             Self::X64 => 0x8664,
             Self::X86 => 0x014c,
             Self::Arm64 => 0xaa64,
+        }
+    }
+}
+
+/// Installation mechanism. Windows keeps its portable replacement protocol;
+/// Debian packages are installed by apt under the desktop's polkit prompt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InstallMode {
+    WindowsPortable,
+    DebianPackage { package: String },
+}
+
+impl Architecture {
+    pub fn debian_name(self) -> &'static str {
+        match self {
+            Self::X64 => "amd64",
+            Self::X86 => "i386",
+            Self::Arm64 => "arm64",
         }
     }
 }
@@ -52,6 +70,7 @@ pub struct Config {
     pub current_version: Version,
     pub product_name: String,
     pub architecture: Architecture,
+    pub mode: InstallMode,
     /// Optional PE subsystem restriction: 2 for Windows GUI, 3 for console.
     pub expected_subsystem: Option<u16>,
     /// Empty for one architecture; e.g. `-x64` for multi-architecture releases.
@@ -89,6 +108,7 @@ impl Config {
             } else {
                 Architecture::X64
             },
+            mode: InstallMode::WindowsPortable,
             expected_subsystem: None,
             asset_suffix: String::new(),
             asset_suffixes: Vec::new(),
@@ -98,6 +118,23 @@ impl Config {
             max_executable_size: 64 * 1024 * 1024,
             install: InstallOptions::default(),
         };
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Select canonical Debian assets named `package_VERSION_ARCH.deb`.
+    pub fn debian(
+        owner: &str,
+        repository: &str,
+        version: &str,
+        package: &str,
+    ) -> Result<Self, String> {
+        let mut config = Self::new(owner, repository, version, "DebianPackage")?;
+        config.product_name = package.replace('+', "-");
+        config.mode = InstallMode::DebianPackage {
+            package: package.into(),
+        };
+        config.install.helper_name = "update-helper".into();
         config.validate()?;
         Ok(config)
     }
@@ -114,11 +151,22 @@ impl Config {
     }
 
     pub fn executable_name(&self, version: &Version) -> String {
-        format!("{}-v{version}{}.exe", self.product_name, self.asset_suffix)
+        match &self.mode {
+            InstallMode::WindowsPortable => {
+                format!("{}-v{version}{}.exe", self.product_name, self.asset_suffix)
+            }
+            InstallMode::DebianPackage { package } => format!(
+                "{package}_{version}_{}.deb",
+                self.architecture.debian_name()
+            ),
+        }
     }
 
     pub fn executable_names(&self, version: &Version) -> Vec<String> {
         let mut names = vec![self.executable_name(version)];
+        if matches!(self.mode, InstallMode::DebianPackage { .. }) {
+            return names;
+        }
         for suffix in &self.asset_suffixes {
             let name = format!("{}-v{version}{suffix}.exe", self.product_name);
             if !names.contains(&name) {
@@ -147,6 +195,19 @@ impl Config {
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
         };
+        if let InstallMode::DebianPackage { package } = &self.mode
+            && (package.len() < 2
+                || !package.as_bytes()[0].is_ascii_alphanumeric()
+                || !package
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"+.-".contains(&b))
+                || self.expected_subsystem.is_some()
+                || !self.asset_suffix.is_empty()
+                || !self.asset_suffixes.is_empty()
+                || !self.legacy_executable_names.is_empty())
+        {
+            return Err("Invalid Debian updater configuration: use a Debian package name and no Windows asset overrides.".into());
+        }
         if !safe(&self.owner)
             || self.install.startup_health_timeout.is_some_and(|timeout| {
                 timeout.is_zero() || timeout > std::time::Duration::from_secs(300)
@@ -171,7 +232,8 @@ impl Config {
             || !self.install.stage_prefix.starts_with('.')
             || !self.install.stage_prefix.ends_with('-')
             || !safe(&self.install.helper_name)
-            || !self.install.helper_name.ends_with(".exe")
+            || (self.mode == InstallMode::WindowsPortable
+                && !self.install.helper_name.ends_with(".exe"))
             || ["ready.exe", "previous.exe", "restore.exe", "failed.exe"]
                 .iter()
                 .any(|name| self.install.helper_name.eq_ignore_ascii_case(name))
@@ -194,5 +256,31 @@ mod tests {
         assert!(config.validate().is_err());
         config.install.helper_name = "../escape.exe".into();
         assert!(config.validate().is_err());
+    }
+}
+
+#[cfg(test)]
+mod debian_tests {
+    use super::*;
+    #[test]
+    fn debian_assets_are_architecture_specific_and_do_not_fall_back_to_executables() {
+        let mut config = Config::debian("owner", "app", "1.0.0", "sample-app").unwrap();
+        let version = "2.0.0".parse().unwrap();
+        for (architecture, name) in [
+            (Architecture::X64, "amd64"),
+            (Architecture::Arm64, "arm64"),
+            (Architecture::X86, "i386"),
+        ] {
+            config.architecture = architecture;
+            assert_eq!(
+                config.executable_names(&version),
+                [format!("sample-app_2.0.0_{name}.deb")]
+            );
+        }
+        config.legacy_executable_names.push("sample.exe".into());
+        assert!(config.validate().is_err());
+        assert!(Config::debian("owner", "app", "1.0.0", "../escape").is_err());
+        assert!(Config::debian("owner", "app", "1.0.0", "BadName").is_err());
+        assert!(Config::debian("owner", "app", "1.0.0", "sample+extra").is_ok());
     }
 }

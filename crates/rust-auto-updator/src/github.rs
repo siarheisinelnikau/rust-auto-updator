@@ -203,3 +203,53 @@ pub fn parse_release(json: &str, config: &Config) -> Result<Option<Release>, Str
         checksum,
     }))
 }
+
+#[cfg(test)]
+mod package_tests {
+    use super::*;
+    fn fixture(config: &Config, version: &str) -> serde_json::Value {
+        let name = config.executable_name(&version.parse().unwrap());
+        serde_json::json!({"tag_name":format!("v{version}"),"html_url":format!("{}/releases/tag/v{version}",config.repository_url()),"draft":false,"prerelease":false,
+            "assets":[{"name":name,"size":4096,"digest":format!("sha256:{}","ab".repeat(32)),"browser_download_url":format!("{}/releases/download/v{version}/{name}",config.repository_url())}]})
+    }
+    #[test]
+    fn debian_discovery_obeys_version_repository_and_digest_contracts() {
+        let mut config = Config::debian("owner", "app", "1.0.0", "sample-app").unwrap();
+        config.allow_asset_digest = true;
+        for version in ["0.9.0", "1.0.0", "1.0.0+build"] {
+            assert!(
+                parse_release(&fixture(&config, version).to_string(), &config)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        let good = fixture(&config, "1.1.0");
+        assert!(parse_release(&good.to_string(), &config).unwrap().is_some());
+        for field in ["draft", "prerelease"] {
+            let mut value = good.clone();
+            value[field] = true.into();
+            assert!(
+                parse_release(&value.to_string(), &config)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        let mut value = good.clone();
+        value["assets"][0]["digest"] = "sha256:bad".into();
+        assert!(parse_release(&value.to_string(), &config).is_err());
+        let mut value = good.clone();
+        value["assets"][0]["browser_download_url"] = "https://example.invalid/update.deb".into();
+        assert!(parse_release(&value.to_string(), &config).is_err());
+        let mut value = good.clone();
+        value["assets"][0]["name"] = "another-app_1.1.0_amd64.deb".into();
+        assert!(parse_release(&value.to_string(), &config).is_err());
+        let mut value = good.clone();
+        value["assets"]
+            .as_array_mut()
+            .unwrap()
+            .push(good["assets"][0].clone());
+        assert!(parse_release(&value.to_string(), &config).is_err());
+        config.allow_asset_digest = false;
+        assert!(parse_release(&good.to_string(), &config).is_err());
+    }
+}
