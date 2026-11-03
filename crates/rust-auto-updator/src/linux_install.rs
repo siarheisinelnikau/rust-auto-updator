@@ -238,11 +238,13 @@ fn read_plan(directory: &Path, config: &Config) -> Result<Plan, String> {
 
 fn process_start(pid: u32) -> Option<String> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    stat.rsplit_once(") ")?
-        .1
-        .split_whitespace()
-        .nth(19)
-        .map(str::to_owned)
+    let fields: Vec<_> = stat.rsplit_once(") ")?.1.split_whitespace().collect();
+    // A launcher may leave its exited child as a zombie until it next reaps.
+    // The executable is already gone; waiting for /proc removal delays restart.
+    if matches!(fields.first().copied(), Some("Z" | "X")) {
+        return None;
+    }
+    fields.get(19).map(|value| (*value).to_owned())
 }
 
 pub(crate) fn prepare(
@@ -579,6 +581,19 @@ mod tests {
         cleanup(&fixture.0, &fixture.1);
         assert_eq!(fs::read(outside.0.join("keep")).unwrap(), b"keep");
         assert!(!valid_stage(Path::new("/tmp"), &fixture.1));
+    }
+
+    #[test]
+    fn an_exited_unreaped_parent_does_not_delay_restart() {
+        let mut child = Command::new("/usr/bin/true").spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while process_start(child.id()).is_some() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let identity = process_start(child.id());
+        child.wait().unwrap();
+        assert!(identity.is_none());
+        assert!(process_start(std::process::id()).is_some());
     }
 
     #[test]

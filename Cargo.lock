@@ -647,7 +647,7 @@ dependencies = [
 
 [[package]]
 name = "rust-auto-updator"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "libc",
  "semver",
@@ -660,7 +660,7 @@ dependencies = [
 
 [[package]]
 name = "rust-auto-updator-egui"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "egui",
  "rust-auto-updator",
