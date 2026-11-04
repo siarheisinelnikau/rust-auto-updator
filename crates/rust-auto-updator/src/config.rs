@@ -27,6 +27,15 @@ pub enum InstallMode {
 }
 
 impl Architecture {
+    /// Filename aliases only; package metadata and PE machine checks stay exact.
+    fn filename_aliases(self) -> &'static [&'static str] {
+        match self {
+            Self::X64 => &["amd64", "x64", "x86_64"],
+            Self::X86 => &["i386", "x86", "i686"],
+            Self::Arm64 => &["arm64", "aarch64"],
+        }
+    }
+
     pub fn debian_name(self) -> &'static str {
         match self {
             Self::X64 => "amd64",
@@ -199,9 +208,23 @@ impl Config {
         if let Some(platform) = &self.asset_platform {
             let product = &self.product_name;
             let extension = self.asset_extension();
-            let architecture = self.architecture.debian_name();
+            // Keep all matching architecture spellings ahead of names that omit
+            // the architecture. This matters when 32- and 64-bit assets coexist.
+            for prefix in [format!("{product}-v{version}"), product.clone()] {
+                for architecture in self.architecture.filename_aliases() {
+                    add(format!("{prefix}-{platform}-{architecture}.{extension}"));
+                }
+            }
+            for prefix in [format!("{product}-v{version}"), product.clone()] {
+                for architecture in self.architecture.filename_aliases() {
+                    add(format!("{prefix}-{architecture}.{extension}"));
+                }
+            }
+            if matches!(self.mode, InstallMode::DebianPackage { .. }) {
+                add(self.legacy_primary_name(version));
+            }
             add(format!("{product}-v{version}-{platform}.{extension}"));
-            add(format!("{product}-v{version}-{architecture}.{extension}"));
+            add(format!("{product}-{platform}.{extension}"));
         }
         add(self.legacy_primary_name(version));
         if matches!(self.mode, InstallMode::WindowsPortable) {
@@ -210,6 +233,9 @@ impl Config {
             }
         } else if self.asset_platform.is_some() {
             add(format!("{}-v{version}.deb", self.product_name));
+        }
+        if self.asset_platform.is_some() {
+            add(format!("{}.{}", self.product_name, self.asset_extension()));
         }
         for template in &self.legacy_executable_names {
             add(template.replace("{version}", &version.to_string()));

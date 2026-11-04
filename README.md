@@ -87,9 +87,14 @@ Products with a sleeping background worker can use `check_latest(&config)` and `
 Set `config.asset_platform = Some("windows".into())` or `Some("ubuntu".into())`
 to prefer `Product-vVERSION-PLATFORM-ARCH.exe` / `.deb` (architecture is `amd64`,
 `i386`, or `arm64`). Discovery tries full platform-and-architecture names, then
-platform-only and architecture-only names, then historical versioned names and
-explicit `legacy_executable_names`. Debian keeps `package_VERSION_ARCH.deb` as
-an architecture-specific fallback before the plain product/version name. Aliases
+versioned and unversioned platform/architecture names, architecture-only names,
+platform-only names, then historical versioned and plain product names and explicit
+`legacy_executable_names`. Names with the matching architecture precede names
+without architecture. Debian also keeps `package_VERSION_ARCH.deb` before generic
+platform/product names. Filename aliases are `amd64`/`x64`/`x86_64`,
+`i386`/`x86`/`i686`, and `arm64`/`aarch64`. These groups are never mixed: an x64
+client does not select an x86 asset. PE or Debian package metadata still has to
+match the configured architecture, including for filenames that omit it. Aliases
 must have the correct extension; filenames are matched exactly. Existing consumers
 that leave `asset_platform` unset retain their previous naming contract.
 

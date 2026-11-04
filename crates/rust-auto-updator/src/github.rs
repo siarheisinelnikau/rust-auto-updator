@@ -275,8 +275,19 @@ mod filename_migration_tests {
                 "windows",
                 vec![
                     "App-v2.0.0-windows-amd64.exe",
-                    "App-v2.0.0-windows.exe",
+                    "App-v2.0.0-windows-x64.exe",
+                    "App-v2.0.0-windows-x86_64.exe",
+                    "App-windows-amd64.exe",
+                    "App-windows-x64.exe",
+                    "App-windows-x86_64.exe",
                     "App-v2.0.0-amd64.exe",
+                    "App-v2.0.0-x64.exe",
+                    "App-v2.0.0-x86_64.exe",
+                    "App-amd64.exe",
+                    "App-x64.exe",
+                    "App-x86_64.exe",
+                    "App-v2.0.0-windows.exe",
+                    "App-windows.exe",
                     "App-v2.0.0.exe",
                     "App.exe",
                 ],
@@ -286,9 +297,20 @@ mod filename_migration_tests {
                 "ubuntu",
                 vec![
                     "App-v2.0.0-ubuntu-amd64.deb",
-                    "App-v2.0.0-ubuntu.deb",
+                    "App-v2.0.0-ubuntu-x64.deb",
+                    "App-v2.0.0-ubuntu-x86_64.deb",
+                    "App-ubuntu-amd64.deb",
+                    "App-ubuntu-x64.deb",
+                    "App-ubuntu-x86_64.deb",
                     "App-v2.0.0-amd64.deb",
+                    "App-v2.0.0-x64.deb",
+                    "App-v2.0.0-x86_64.deb",
+                    "App-amd64.deb",
+                    "App-x64.deb",
+                    "App-x86_64.deb",
                     "sample-app_2.0.0_amd64.deb",
+                    "App-v2.0.0-ubuntu.deb",
+                    "App-ubuntu.deb",
                     "App-v2.0.0.deb",
                     "App.deb",
                 ],
@@ -324,6 +346,80 @@ mod filename_migration_tests {
             assert!(parse_release(&foreign.to_string(), &config).is_err());
         }
     }
+    #[test]
+    fn unversioned_architecture_aliases_select_the_current_build_not_another_cpu() {
+        for (architecture, aliases, wrong) in [
+            (
+                crate::Architecture::X64,
+                vec!["amd64", "x64", "x86_64"],
+                vec!["i386", "x86", "i686", "arm64", "aarch64"],
+            ),
+            (
+                crate::Architecture::X86,
+                vec!["i386", "x86", "i686"],
+                vec!["amd64", "x64", "x86_64", "arm64", "aarch64"],
+            ),
+            (
+                crate::Architecture::Arm64,
+                vec!["arm64", "aarch64"],
+                vec!["amd64", "x64", "x86_64", "i386", "x86", "i686"],
+            ),
+        ] {
+            for platform in ["windows", "ubuntu"] {
+                let (mut config, extension) = if platform == "windows" {
+                    (Config::new("owner", "app", "1.0.0", "App").unwrap(), "exe")
+                } else {
+                    (
+                        Config::debian("owner", "app", "1.0.0", "sample-app").unwrap(),
+                        "deb",
+                    )
+                };
+                config.product_name = "App".into();
+                config.asset_platform = Some(platform.into());
+                config.architecture = architecture;
+                config.allow_asset_digest = true;
+                let foreign: Vec<_> = wrong
+                    .iter()
+                    .flat_map(|arch| {
+                        [
+                            format!("App-{arch}.{extension}"),
+                            format!("App-{platform}-{arch}.{extension}"),
+                        ]
+                    })
+                    .collect();
+                let foreign: Vec<_> = foreign.iter().map(String::as_str).collect();
+                assert!(parse_release(&release(&foreign).to_string(), &config).is_err());
+                for alias in &aliases {
+                    for name in [
+                        format!("App-{alias}.{extension}"),
+                        format!("App-{platform}-{alias}.{extension}"),
+                        format!("App-v2.0.0-{platform}-{alias}.{extension}"),
+                    ] {
+                        let generic = format!("App-{platform}.{extension}");
+                        let mut candidates = foreign.clone();
+                        candidates.extend([generic.as_str(), name.as_str()]);
+                        let parsed = parse_release(&release(&candidates).to_string(), &config)
+                            .unwrap()
+                            .unwrap();
+                        assert_eq!(parsed.executable_name(), name);
+                    }
+                }
+                for name in [
+                    format!("App-{platform}.{extension}"),
+                    format!("App.{extension}"),
+                ] {
+                    assert_eq!(
+                        parse_release(&release(&[&name]).to_string(), &config)
+                            .unwrap()
+                            .unwrap()
+                            .executable_name(),
+                        name
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn migration_preserves_existing_consumers_and_rejects_unsafe_or_cross_format_aliases() {
         let mut config = Config::debian("owner", "app", "1.0.0", "sample-app").unwrap();
