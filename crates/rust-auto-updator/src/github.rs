@@ -253,3 +253,101 @@ mod package_tests {
         assert!(parse_release(&good.to_string(), &config).is_err());
     }
 }
+
+#[cfg(test)]
+mod filename_migration_tests {
+    use super::*;
+    fn release(names: &[&str]) -> serde_json::Value {
+        serde_json::json!({"tag_name":"v2.0.0", "html_url":"https://github.com/owner/app/releases/tag/v2.0.0",
+            "draft":false,"prerelease":false,"assets":names.iter().map(|name| serde_json::json!({
+                "name":name,"size":4096,"digest":format!("sha256:{}","ab".repeat(32)),
+                "browser_download_url":format!("https://github.com/owner/app/releases/download/v2.0.0/{name}")
+            })).collect::<Vec<_>>()})
+    }
+    #[test]
+    fn both_platforms_choose_most_specific_present_name_independent_of_asset_order() {
+        let windows = Config::new("owner", "app", "1.0.0", "App").unwrap();
+        let mut ubuntu = Config::debian("owner", "app", "1.0.0", "sample-app").unwrap();
+        ubuntu.product_name = "App".into();
+        for (mut config, platform, names) in [
+            (
+                windows,
+                "windows",
+                vec![
+                    "App-v2.0.0-windows-amd64.exe",
+                    "App-v2.0.0-windows.exe",
+                    "App-v2.0.0-amd64.exe",
+                    "App-v2.0.0.exe",
+                    "App.exe",
+                ],
+            ),
+            (
+                ubuntu,
+                "ubuntu",
+                vec![
+                    "App-v2.0.0-ubuntu-amd64.deb",
+                    "App-v2.0.0-ubuntu.deb",
+                    "App-v2.0.0-amd64.deb",
+                    "sample-app_2.0.0_amd64.deb",
+                    "App-v2.0.0.deb",
+                    "App.deb",
+                ],
+            ),
+        ] {
+            config.architecture = crate::Architecture::X64;
+            config.asset_platform = Some(platform.into());
+            config.allow_asset_digest = true;
+            config.legacy_executable_names = vec![names.last().unwrap().to_string()];
+            assert_eq!(config.executable_names(&"2.0.0".parse().unwrap()), names);
+            for first in 0..names.len() {
+                let shuffled: Vec<_> = names[first..].iter().copied().rev().collect();
+                let parsed = parse_release(&release(&shuffled).to_string(), &config)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(parsed.executable_name(), names[first]);
+            }
+            let mut damaged = release(&names);
+            damaged["assets"][0]["digest"] = "sha256:bad".into();
+            assert!(parse_release(&damaged.to_string(), &config).is_err());
+            let mut duplicate = release(&names);
+            duplicate["assets"]
+                .as_array_mut()
+                .unwrap()
+                .push(release(&names)["assets"][0].clone());
+            assert!(parse_release(&duplicate.to_string(), &config).is_err());
+            let foreign = release(&[
+                "App-v2.0.0-windows-arm64.exe",
+                "App-v2.0.0-ubuntu-arm64.deb",
+                "Other.exe",
+                "Other.deb",
+            ]);
+            assert!(parse_release(&foreign.to_string(), &config).is_err());
+        }
+    }
+    #[test]
+    fn migration_preserves_existing_consumers_and_rejects_unsafe_or_cross_format_aliases() {
+        let mut config = Config::debian("owner", "app", "1.0.0", "sample-app").unwrap();
+        config.architecture = crate::Architecture::X64;
+        assert_eq!(
+            config.executable_name(&"2.0.0".parse().unwrap()),
+            "sample-app_2.0.0_amd64.deb"
+        );
+        config.asset_platform = Some("ubuntu".into());
+        config.architecture = crate::Architecture::Arm64;
+        assert_eq!(
+            config.executable_name(&"2.0.0".parse().unwrap()),
+            "sample-app-v2.0.0-ubuntu-arm64.deb"
+        );
+        config.legacy_executable_names = vec!["old-{version}.deb".into()];
+        assert!(config.validate().is_ok());
+        for name in ["old.exe", "../old.deb", "old-{unknown}.deb"] {
+            config.legacy_executable_names = vec![name.into()];
+            assert!(config.validate().is_err());
+        }
+        config.legacy_executable_names.clear();
+        for platform in ["", "../ubuntu", "Ubuntu", "ubuntu/{arch}"] {
+            config.asset_platform = Some(platform.into());
+            assert!(config.validate().is_err());
+        }
+    }
+}

@@ -84,6 +84,21 @@ The workspace requires Rust 1.95, matching the optional egui 0.37 dependency. Th
 
 Products with a sleeping background worker can use `check_latest(&config)` and `prepare_download(&release, &config, progress)` directly on that worker instead of creating a nested `Service`. The cancellable variant is `prepare_download_cancellable(&release, &config, &AtomicBool, progress)`. Cancellation is checked before requests, between download reads and before the prepared result; an already blocked network operation remains bounded by its configured timeout. `Service::cancel_download()` provides the same cancellation for the shared worker, and dropping the service cancels its active download.
 
+Set `config.asset_platform = Some("windows".into())` or `Some("ubuntu".into())`
+to prefer `Product-vVERSION-PLATFORM-ARCH.exe` / `.deb` (architecture is `amd64`,
+`i386`, or `arm64`). Discovery tries full platform-and-architecture names, then
+platform-only and architecture-only names, then historical versioned names and
+explicit `legacy_executable_names`. Debian keeps `package_VERSION_ARCH.deb` as
+an architecture-specific fallback before the plain product/version name. Aliases
+must have the correct extension; filenames are matched exactly. Existing consumers
+that leave `asset_platform` unset retain their previous naming contract.
+
+The most specific present asset wins regardless of GitHub's asset order. An invalid
+digest, duplicate name or bad download URL on that chosen asset fails the update;
+it never silently falls back to another download. Keep byte-identical assets under
+old names in future releases while supporting already-installed older updaters:
+changing the library cannot change code already running on users' machines.
+
 `Release` exposes the parsed version, notes and release page, plus read-only `executable_name()`, `executable_url()`, `executable_size()`, `checksum_url()` and `sha256_digest()` accessors. `Prepared` owns its staging files until successful handoff; dropping it removes only known staging files. Before handoff, `Prepared::set_restart_args(...)` can persist the host's latest saved document or session arguments.
 
 Product-specific compatibility belongs in configuration:

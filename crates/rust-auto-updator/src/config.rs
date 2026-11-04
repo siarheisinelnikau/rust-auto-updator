@@ -71,6 +71,10 @@ pub struct Config {
     pub product_name: String,
     pub architecture: Architecture,
     pub mode: InstallMode,
+    /// Opt into platform-qualified assets, e.g. `windows` or `ubuntu`.
+    /// Discovery tries platform/architecture names before historical names.
+    /// None preserves the existing filename contract for other consumers.
+    pub asset_platform: Option<String>,
     /// Optional PE subsystem restriction: 2 for Windows GUI, 3 for console.
     pub expected_subsystem: Option<u16>,
     /// Empty for one architecture; e.g. `-x64` for multi-architecture releases.
@@ -109,6 +113,7 @@ impl Config {
                 Architecture::X64
             },
             mode: InstallMode::WindowsPortable,
+            asset_platform: None,
             expected_subsystem: None,
             asset_suffix: String::new(),
             asset_suffixes: Vec::new(),
@@ -150,7 +155,14 @@ impl Config {
         )
     }
 
-    pub fn executable_name(&self, version: &Version) -> String {
+    fn asset_extension(&self) -> &'static str {
+        match self.mode {
+            InstallMode::WindowsPortable => "exe",
+            InstallMode::DebianPackage { .. } => "deb",
+        }
+    }
+
+    fn legacy_primary_name(&self, version: &Version) -> String {
         match &self.mode {
             InstallMode::WindowsPortable => {
                 format!("{}-v{version}{}.exe", self.product_name, self.asset_suffix)
@@ -162,22 +174,45 @@ impl Config {
         }
     }
 
-    pub fn executable_names(&self, version: &Version) -> Vec<String> {
-        let mut names = vec![self.executable_name(version)];
-        if matches!(self.mode, InstallMode::DebianPackage { .. }) {
-            return names;
+    pub fn executable_name(&self, version: &Version) -> String {
+        match &self.asset_platform {
+            Some(platform) => format!(
+                "{}-v{version}-{platform}-{}.{}",
+                self.product_name,
+                self.architecture.debian_name(),
+                self.asset_extension()
+            ),
+            None => self.legacy_primary_name(version),
         }
-        for suffix in &self.asset_suffixes {
-            let name = format!("{}-v{version}{suffix}.exe", self.product_name);
+    }
+
+    /// Exact names in preference order. Never glob or fall back after a chosen
+    /// asset fails verification: that could select another platform or hide damage.
+    pub fn executable_names(&self, version: &Version) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut add = |name: String| {
             if !names.contains(&name) {
                 names.push(name);
             }
+        };
+        add(self.executable_name(version));
+        if let Some(platform) = &self.asset_platform {
+            let product = &self.product_name;
+            let extension = self.asset_extension();
+            let architecture = self.architecture.debian_name();
+            add(format!("{product}-v{version}-{platform}.{extension}"));
+            add(format!("{product}-v{version}-{architecture}.{extension}"));
+        }
+        add(self.legacy_primary_name(version));
+        if matches!(self.mode, InstallMode::WindowsPortable) {
+            for suffix in &self.asset_suffixes {
+                add(format!("{}-v{version}{suffix}.exe", self.product_name));
+            }
+        } else if self.asset_platform.is_some() {
+            add(format!("{}-v{version}.deb", self.product_name));
         }
         for template in &self.legacy_executable_names {
-            let name = template.replace("{version}", &version.to_string());
-            if !names.contains(&name) {
-                names.push(name);
-            }
+            add(template.replace("{version}", &version.to_string()));
         }
         names
     }
@@ -203,12 +238,16 @@ impl Config {
                     .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"+.-".contains(&b))
                 || self.expected_subsystem.is_some()
                 || !self.asset_suffix.is_empty()
-                || !self.asset_suffixes.is_empty()
-                || !self.legacy_executable_names.is_empty())
+                || !self.asset_suffixes.is_empty())
         {
             return Err("Invalid Debian updater configuration: use a Debian package name and no Windows asset overrides.".into());
         }
-        if !safe(&self.owner)
+        if self.asset_platform.as_ref().is_some_and(|platform| {
+            platform.is_empty()
+                || !platform
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        }) || !safe(&self.owner)
             || self.install.startup_health_timeout.is_some_and(|timeout| {
                 timeout.is_zero() || timeout > std::time::Duration::from_secs(300)
             })
@@ -222,10 +261,10 @@ impl Config {
                 .asset_suffixes
                 .iter()
                 .any(|suffix| !suffix.is_empty() && !safe(suffix))
-            || self
-                .legacy_executable_names
-                .iter()
-                .any(|name| !safe(&name.replace("{version}", "1.0.0")) || !name.ends_with(".exe"))
+            || self.legacy_executable_names.iter().any(|name| {
+                !safe(&name.replace("{version}", "1.0.0"))
+                    || !name.ends_with(&format!(".{}", self.asset_extension()))
+            })
             || !safe(&self.checksum_filename("application.exe"))
             || self.max_executable_size < 1024
             || !safe(&self.install.stage_prefix)
