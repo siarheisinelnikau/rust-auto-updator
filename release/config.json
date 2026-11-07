@@ -1,0 +1,16 @@
+{
+  "repository": "siarheisinelnikau/rust-auto-updator",
+  "product": "RustAutoUpdator",
+  "kind": "source",
+  "assets": [
+    {
+      "name": "LICENSE",
+      "repository_file": "LICENSE"
+    },
+    {
+      "name": "RustAutoUpdator-v{version}-source.zip"
+    }
+  ],
+  "notices": false,
+  "checksum_aliases": []
+}
